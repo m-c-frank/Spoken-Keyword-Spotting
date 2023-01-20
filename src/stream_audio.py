@@ -18,12 +18,13 @@ class StreamPrediction:
     Class for predicting streaming data. Heavily adapted from the implementation:
     """
 
-    def __init__(self, model_path):
+    def __init__(self, model_path, hotword):
         # Load model
         self.feature_extractor = None
         self.pca = None
-        self.marvin_svm = None
+        self.hotword_svm = None
         self.load_models(model_path)
+        self.hotword = hotword
 
         # Recording parameters
         self.sr = 16000
@@ -50,18 +51,18 @@ class StreamPrediction:
         """
 
         # Load model structure
-        model = load_model(model_path + "/marvin_kws.h5")
+        model = load_model(model_path + f"/{self.hotword}_kws.h5")
 
         layer_name = "features256"
         self.feature_extractor = Model(inputs=model.input, outputs=model.get_layer(layer_name).output)
 
         # Load trained PCA object
-        with open(model_path + "/marvin_kws_pca.pickle", "rb") as file:
+        with open(model_path + f"/{self.hotword}_kws_pca.pickle", "rb") as file:
             self.pca = pickle.load(file)
 
         # Load trained SVM
-        with open(model_path + "/marvin_kws_svm.pickle", "rb") as file:
-            self.marvin_svm = pickle.load(file)
+        with open(model_path + f"/{self.hotword}_kws_svm.pickle", "rb") as file:
+            self.hotword_svm = pickle.load(file)
 
         print("Loaded models from disk")
 
@@ -77,7 +78,7 @@ class StreamPrediction:
             rate=self.sr,
             input=True,
             frames_per_buffer=self.chunk_samples,
-            input_device_index=6,
+            input_device_index=13,
             stream_callback=self.callback,
         )
 
@@ -92,7 +93,7 @@ class StreamPrediction:
                 self.plotter(data, fbank, pred)
 
                 if pred == 1:
-                    print("Marvin!", sep="", end="", flush=True)
+                    print(self.hotword, sep="", end="", flush=True)
 
         except (KeyboardInterrupt, SystemExit):
             stream.stop_stream()
@@ -109,7 +110,7 @@ class StreamPrediction:
         feature_embeddings = self.feature_extractor.predict(fbank)
 
         feature_embeddings_scaled = self.pca.transform(feature_embeddings)
-        prediction = self.marvin_svm.predict(feature_embeddings_scaled)
+        prediction = self.hotword_svm.predict(feature_embeddings_scaled)
 
         return prediction
 
@@ -176,7 +177,7 @@ class StreamPrediction:
             ax.text(
                 x=0.5,
                 y=0.5,
-                s="MARVIN!",
+                s=self.hotword.upper(),
                 horizontalalignment="center",
                 verticalalignment="center",
                 fontsize=30,
@@ -196,5 +197,9 @@ class StreamPrediction:
 
 
 if __name__ == "__main__":
+    p = pyaudio.PyAudio()
+    for i in range(p.get_device_count()):
+        print(p.get_device_info_by_index(i))
+
     audio_stream = StreamPrediction("../models")
     audio_stream.start_stream()

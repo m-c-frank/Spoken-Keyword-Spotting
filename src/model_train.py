@@ -21,7 +21,7 @@ from utils import getDataset, plot_history
 from get_data import downloadData, getDataDict, getDataframe
 
 
-def model_train():
+def model_train(hotword="stop"):
     """
     Trains model which is used as a feature extractor
     :return:None
@@ -78,17 +78,17 @@ def model_train():
 
     # Save model
     print("Saving model")
-    model.save("../models/marvin_kws.h5")
+    model.save(f"../models/{hotword}_kws.h5")
 
     # Save history data
     print("Saving training history")
-    with open("../models/marvin_kws_history.pickle", "wb") as file:
+    with open(f"../models/{hotword}_kws_history.pickle", "wb") as file:
         pickle.dump(history.history, file, protocol=pickle.HIGHEST_PROTOCOL)
 
     plot_history(history=history)
 
 
-def marvin_kws_model():
+def train_kws_model(hotword="stop"):
     """
     Trains an One Class SVM for hotword detection
     :return: None
@@ -105,28 +105,28 @@ def marvin_kws_model():
     valDF = getDataframe(dataDict["val"])
 
     # Obtain Marvin data from training data
-    marvin_data, _ = getDataset(
-        df=trainDF.loc[trainDF["category"] == "marvin", :],
+    training_data, _ = getDataset(
+        df=trainDF.loc[trainDF["category"] == hotword, :],
         batch_size=BATCH_SIZE,
-        cache_file="kws_marvin_cache",
+        cache_file=f"kws_{hotword}_cache",
         shuffle=False,
     )
 
-    # Obtain Marvin - Other separated data from validation data
-    valDF["class"] = valDF.apply(lambda row: 1 if row["category"] == "marvin" else -1, axis=1)
+    # Obtain hotword - Other separated data from validation data
+    valDF["class"] = valDF.apply(lambda row: 1 if row["category"] == hotword else -1, axis=1)
     valDF.drop("category", axis=1)
     val_true_labels = valDF["class"].tolist()
 
     val_data, _ = getDataset(df=valDF, batch_size=BATCH_SIZE, cache_file="kws_val_cache", shuffle=False)
 
     # Load model and create feature extractor
-    model = load_model("../models/marvin_kws.h5")
+    model = load_model(f"../models/{hotword}_kws.h5")
 
     layer_name = "features256"
     feature_extractor = Model(inputs=model.input, outputs=model.get_layer(layer_name).output)
 
     # Obtain the feature embeddings
-    X_train = feature_extractor.predict(marvin_data, use_multiprocessing=True)
+    X_train = feature_extractor.predict(training_data, use_multiprocessing=True)
     X_val = feature_extractor.predict(val_data, use_multiprocessing=True)
 
     # Apply PCA to reduce dimensionality
@@ -138,7 +138,7 @@ def marvin_kws_model():
     X_val_transformed = pca.transform(X_val)
 
     # SVM hyper-parameter tuning using Gaussian process
-    marvin_svm = svm.OneClassSVM()
+    hotword_svm = svm.OneClassSVM()
 
     svm_space = [
         Real(10 ** -5, 10 ** 0, "log-uniform", name="gamma"),
@@ -147,10 +147,10 @@ def marvin_kws_model():
 
     @use_named_args(svm_space)
     def svm_objective(**params):
-        marvin_svm.set_params(**params)
+        hotword_svm.set_params(**params)
 
-        marvin_svm.fit(X_train_transformed)
-        val_pred_labels = marvin_svm.predict(X_val_transformed)
+        hotword_svm.fit(X_train_transformed)
+        val_pred_labels = hotword_svm.predict(X_val_transformed)
 
         score = f1_score(val_pred_labels, val_true_labels)
 
@@ -163,24 +163,24 @@ def marvin_kws_model():
     print("Best F1 score={:.4f}".format(-res_gp_svm.fun))
 
     ax = plot_convergence(res_gp_svm)
-    plt.savefig("../docs/results/marvin_svm.png", dpi=300)
+    plt.savefig(f"../docs/results/{hotword}_svm.png", dpi=300)
     plt.show()
 
     # Instantiate a SVM with the optimal hyper-parameters
     best_params_svm = {k.name: x for k, x in zip(svm_space, res_gp_svm.x)}
-    marvin_kws = svm.OneClassSVM()
-    marvin_kws.set_params(**best_params_svm)
+    hotword_kws = svm.OneClassSVM()
+    hotword_kws.set_params(**best_params_svm)
 
-    marvin_kws.fit(X_train_transformed)
+    hotword_kws.fit(X_train_transformed)
 
     # Performance on training set
-    val_pred_labels = marvin_kws.predict(X_val_transformed)
-    OC_Statistics(val_pred_labels, val_true_labels, "marvin_cm_training")
+    val_pred_labels = hotword_kws.predict(X_val_transformed)
+    OC_Statistics(val_pred_labels, val_true_labels, f"{hotword}_cm_training")
 
     print("Saving PCA object")
-    with open("../models/marvin_kws_pca.pickle", "wb") as file:
+    with open(f"../models/{hotword}_kws_pca.pickle", "wb") as file:
         pickle.dump(pca, file, protocol=pickle.HIGHEST_PROTOCOL)
 
-    print("Saving Marvin SVM")
-    with open("../models/marvin_kws_svm.pickle", "wb") as file:
-        pickle.dump(marvin_svm, file, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"Saving {hotword} SVM")
+    with open(f"../models/{hotword}_kws_svm.pickle", "wb") as file:
+        pickle.dump(hotword_svm, file, protocol=pickle.HIGHEST_PROTOCOL)
